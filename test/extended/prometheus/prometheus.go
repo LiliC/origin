@@ -36,82 +36,6 @@ import (
 	helper "github.com/openshift/origin/test/extended/util/prometheus"
 )
 
-var _ = g.Describe("[sig-instrumentation][Late] Alerts", func() {
-	defer g.GinkgoRecover()
-	var (
-		oc = exutil.NewCLIWithoutNamespace("prometheus")
-
-		url, bearerToken string
-	)
-	g.BeforeEach(func() {
-		var ok bool
-		url, bearerToken, ok = helper.LocatePrometheus(oc)
-		if !ok {
-			e2e.Failf("Prometheus could not be located on this cluster, failing prometheus test")
-		}
-	})
-
-	g.It("shouldn't report any alerts in firing state apart from Watchdog and AlertmanagerReceiversNotConfigured", func() {
-		if len(os.Getenv("TEST_UNSUPPORTED_ALLOW_VERSION_SKEW")) > 0 {
-			e2eskipper.Skipf("Test is disabled to allow cluster components to have different versions, and skewed versions trigger multiple other alerts")
-		}
-		oc.SetupProject()
-		ns := oc.Namespace()
-		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
-		defer func() {
-			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
-		}()
-
-		tests := map[string]bool{
-			// Checking Watchdog alert state is done in "should have a Watchdog alert in firing state".
-			// TODO: remove KubePodCrashLooping subtraction logic once https://bugzilla.redhat.com/show_bug.cgi?id=1842002
-			// is fixed, but for now we are ignoring KubePodCrashLooping alerts in the openshift-kube-controller-manager namespace.
-			`count_over_time(ALERTS{alertname!~"Watchdog|AlertmanagerReceiversNotConfigured|KubeAPILatencyHigh",alertstate="firing",severity!="info"}[2h]) - count_over_time(ALERTS{alertname="KubePodCrashLooping",namespace="openshift-kube-controller-manager",alertstate="firing",severity!="info"}[2h]) >= 1`: false,
-		}
-		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
-	})
-
-	g.It("should have a Watchdog alert in firing state the entire cluster run", func() {
-		oc.SetupProject()
-		ns := oc.Namespace()
-		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
-		defer func() {
-			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
-		}()
-
-		tests := map[string]bool{
-			// should have constantly firing a watchdog alert
-			`count_over_time(ALERTS{alertstate="firing",alertname="Watchdog", severity="none"}[1h])`: true,
-		}
-		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
-
-		e2e.Logf("Watchdog alert is firing")
-	})
-
-	g.It("shouldn't exceed the 500 series limit of total series sent via telemetry from each cluster", func() {
-		if !hasPullSecret(oc.AdminKubeClient(), "cloud.openshift.com") {
-			e2eskipper.Skipf("Telemetry is disabled")
-		}
-		oc.SetupProject()
-		ns := oc.Namespace()
-
-		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
-		defer func() {
-			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
-		}()
-
-		tests := map[string]bool{
-			// We want to limit the number of total series sent, the cluster:telemetry_selected_series:count
-			// rule contains the count of the all the series that are sent via telemetry.
-			`max_over_time(cluster:telemetry_selected_series:count[2h]) >= 500`: false,
-		}
-		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
-
-		e2e.Logf("Total number of series sent via telemetry is below the limit")
-	})
-
-})
-
 var _ = g.Describe("[sig-instrumentation] Prometheus", func() {
 	defer g.GinkgoRecover()
 	var (
@@ -460,6 +384,101 @@ var _ = g.Describe("[sig-instrumentation] Prometheus", func() {
 			helper.RunQueries(queries, oc, ns, execPod.Name, url, bearerToken)
 		})
 	})
+})
+
+var _ = g.Describe("[sig-instrumentation][Late] Alerts", func() {
+	defer g.GinkgoRecover()
+	var (
+		oc = exutil.NewCLIWithoutNamespace("prometheus")
+
+		url, bearerToken string
+	)
+	g.BeforeEach(func() {
+		var ok bool
+		url, bearerToken, ok = helper.LocatePrometheus(oc)
+		if !ok {
+			e2e.Failf("Prometheus could not be located on this cluster, failing prometheus test")
+		}
+	})
+
+	g.It("shouldn't report any alerts in firing state apart from Watchdog and AlertmanagerReceiversNotConfigured", func() {
+		if len(os.Getenv("TEST_UNSUPPORTED_ALLOW_VERSION_SKEW")) > 0 {
+			e2eskipper.Skipf("Test is disabled to allow cluster components to have different versions, and skewed versions trigger multiple other alerts")
+		}
+		oc.SetupProject()
+		ns := oc.Namespace()
+		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
+		defer func() {
+			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
+		}()
+
+		tests := map[string]bool{
+			// Checking Watchdog alert state is done in "should have a Watchdog alert in firing state".
+			// TODO: remove KubePodCrashLooping subtraction logic once https://bugzilla.redhat.com/show_bug.cgi?id=1842002
+			// is fixed, but for now we are ignoring KubePodCrashLooping alerts in the openshift-kube-controller-manager namespace.
+			`count_over_time(ALERTS{alertname!~"Watchdog|AlertmanagerReceiversNotConfigured|KubeAPILatencyHigh",alertstate="firing",severity!="info"}[2h]) - count_over_time(ALERTS{alertname="KubePodCrashLooping",namespace="openshift-kube-controller-manager",alertstate="firing",severity!="info"}[2h]) >= 1`: false,
+		}
+		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
+	})
+
+	g.It("should have a Watchdog alert in firing state the entire cluster run", func() {
+		oc.SetupProject()
+		ns := oc.Namespace()
+		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
+		defer func() {
+			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
+		}()
+
+		tests := map[string]bool{
+			// should have constantly firing a watchdog alert
+			`count_over_time(ALERTS{alertstate="firing",alertname="Watchdog", severity="none"}[1h])`: true,
+		}
+		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
+
+		e2e.Logf("Watchdog alert is firing")
+	})
+
+	g.It("shouldn't exceed the 500 series limit of total series sent via telemetry from each cluster", func() {
+		if !hasPullSecret(oc.AdminKubeClient(), "cloud.openshift.com") {
+			e2eskipper.Skipf("Telemetry is disabled")
+		}
+		oc.SetupProject()
+		ns := oc.Namespace()
+
+		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
+		defer func() {
+			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
+		}()
+
+		tests := map[string]bool{
+			// We want to limit the number of total series sent, the cluster:telemetry_selected_series:count
+			// rule contains the count of the all the series that are sent via telemetry.
+			`max_over_time(cluster:telemetry_selected_series:count[2h]) >= 500`: false,
+		}
+		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
+
+		e2e.Logf("Total number of series sent via telemetry is below the limit")
+	})
+
+	g.It("shouldn't exceed the 200k number of series in the head block", func() {
+		oc.SetupProject()
+		ns := oc.Namespace()
+
+		execPod := exutil.CreateCentosExecPodOrFail(oc.AdminKubeClient(), ns, "execpod", nil)
+		defer func() {
+			oc.AdminKubeClient().CoreV1().Pods(ns).Delete(context.Background(), execPod.Name, *metav1.NewDeleteOptions(1))
+		}()
+
+		tests := map[string]bool{
+			// This is a rough current estimate of us to detect if we go over
+			// a given limit to possibly detect higher cardinality metrics.
+			`max_over_time(prometheus_tsdb_head_series[2h]) >= 200000`: false,
+		}
+		helper.RunQueries(tests, oc, ns, execPod.Name, url, bearerToken)
+
+		e2e.Logf("Total number of series in the head block went above the limit")
+	})
+
 })
 
 func all(errs ...error) []error {
